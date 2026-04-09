@@ -4,13 +4,52 @@ Provides REST API endpoints for querying and document management.
 """
 
 import os
+import secrets
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Depends, Security
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 import uvicorn
+
+
+# API Key configuration
+API_KEY_NAME = "X-API-Key"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+
+
+def get_api_keys() -> set:
+    """Load API keys from environment variable or file."""
+    # First check environment variable (comma-separated keys)
+    env_keys = os.getenv("RAG_API_KEYS", "")
+    if env_keys:
+        return set(key.strip() for key in env_keys.split(",") if key.strip())
+
+    # Fall back to file-based keys
+    keys_file = os.path.join(os.path.dirname(__file__), ".api_keys")
+    if os.path.exists(keys_file):
+        with open(keys_file, "r") as f:
+            return set(line.strip() for line in f if line.strip() and not line.startswith("#"))
+
+    return set()
+
+
+async def verify_api_key(api_key: str = Security(api_key_header)):
+    """Verify the API key from request header."""
+    if api_key is None:
+        raise HTTPException(status_code=401, detail="API key required")
+
+    valid_keys = get_api_keys()
+    if not valid_keys:
+        # If no keys configured, allow access (development mode)
+        return api_key
+
+    if api_key not in valid_keys:
+        raise HTTPException(status_code=403, detail="Invalid API key")
+
+    return api_key
 
 from rag_pipeline import RAGPipeline
 
@@ -93,7 +132,7 @@ async def health():
 
 
 @app.post("/query", response_model=QueryResponse)
-async def query(request: QueryRequest):
+async def query(request: QueryRequest, api_key: str = Depends(verify_api_key)):
     """
     Query the RAG system with a question.
 
@@ -118,7 +157,8 @@ async def query(request: QueryRequest):
 @app.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
-    metadata: str = Form(default="{}")
+    metadata: str = Form(default="{}"),
+    api_key: str = Depends(verify_api_key)
 ):
     """
     Upload a document file to add to the knowledge base.
@@ -179,7 +219,7 @@ async def upload_document(
 
 
 @app.post("/add-text")
-async def add_text_document(request: DocumentRequest):
+async def add_text_document(request: DocumentRequest, api_key: str = Depends(verify_api_key)):
     """
     Add a text document directly via API.
 
@@ -200,7 +240,7 @@ async def add_text_document(request: DocumentRequest):
 
 
 @app.post("/reindex", response_model=StatusResponse)
-async def reindex():
+async def reindex(api_key: str = Depends(verify_api_key)):
     """
     Reindex all documents from the documents directory.
     Use this after adding new files to the documents folder.
@@ -216,7 +256,7 @@ async def reindex():
 
 
 @app.get("/stats", response_model=StatsResponse)
-async def get_stats():
+async def get_stats(api_key: str = Depends(verify_api_key)):
     """Get statistics about the RAG system."""
     if rag is None:
         raise HTTPException(status_code=503, detail="RAG pipeline not initialized")

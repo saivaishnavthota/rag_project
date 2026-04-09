@@ -1,0 +1,16 @@
+# API keys - never commit
+.api_keys
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# Vector store data
+chroma_db/
+
+# IDE
+.vscode/
+.idea/
