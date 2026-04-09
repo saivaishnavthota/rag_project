@@ -15,16 +15,16 @@ class RAGPipeline:
     Retrieves relevant documents and generates answers using Qwen 2.5 7B.
     """
 
-    def __init__(self, model_path: str = "Qwen/Qwen2.5-7B-Instruct"):
+    def __init__(self, model_name: str = "qwen2.5:7b"):
         """
         Initialize the RAG pipeline.
 
         Args:
-            model_path: Path to the Qwen model (HuggingFace ID or local path).
+            model_name: Ollama model name (e.g., qwen2.5:7b).
         """
         print("Initializing RAG Pipeline...")
         self.vectorstore = get_vector_store()
-        self.llm = QwenLLM(model_path=model_path)
+        self.llm = QwenLLM(model_path=model_name)
         self.retriever = self.vectorstore.as_retriever(
             search_type="similarity",
             search_kwargs={"k": 4}
