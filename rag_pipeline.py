@@ -2,8 +2,8 @@
 RAG Pipeline combining vector store retrieval with Qwen LLM generation.
 """
 
-from langchain.schema import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from vector_store import get_vector_store, create_vector_store
 from llm import QwenLLM
