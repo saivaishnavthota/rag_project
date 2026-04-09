@@ -1,0 +1,17 @@
+This is a sample document for testing the RAG system.
+
+The RAG (Retrieval-Augmented Generation) system combines document retrieval with language model generation.
+It uses ChromaDB as the vector database and Qwen 2.5 7B as the language model.
+
+Key Features:
+- Local embedding generation using sentence-transformers
+- Vector storage with ChromaDB
+- Question answering using Qwen 2.5 7B
+- REST API for easy integration
+
+To use this system:
+1. Place your documents in the 'documents' folder
+2. Run the server using 'python main.py'
+3. Send queries to the /query endpoint
+
+This sample document can be used to test if the system is working correctly.
