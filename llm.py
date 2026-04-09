@@ -1,55 +1,38 @@
 """
-Local LLM setup using Qwen 2.5 7B.
-Runs locally with automatic device detection.
+Local LLM setup using Ollama.
+Uses the locally installed model via Ollama API.
 """
 
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
-
-def get_device_config():
-    """Detect the best available device and return appropriate config."""
-    if torch.cuda.is_available():
-        try:
-            torch.tensor([1.0]).cuda()
-            return {"device_map": "auto", "torch_dtype": torch.float16}
-        except Exception:
-            pass
-    # CPU fallback
-    return {"device_map": "cpu", "torch_dtype": torch.float32}
+import requests
+import json
 
 
 class QwenLLM:
     """
-    Wrapper class for Qwen 2.5 7B model running locally.
+    Wrapper class for LLM running via Ollama.
     """
 
-    def __init__(self, model_path: str = "Qwen/Qwen2.5-7B-Instruct"):
+    def __init__(self, model_path: str = "qwen2.5:7b"):
         """
-        Initialize the Qwen model.
+        Initialize the Ollama client.
 
         Args:
-            model_path: HuggingFace model ID or local path to the model.
-                       If you have the model downloaded locally, use that path.
+            model_path: Ollama model name (e.g., qwen2.5:7b, qwen2.5:7b-instruct).
         """
-        print(f"Loading Qwen model from {model_path}...")
+        self.model_name = model_path
+        self.base_url = "http://localhost:11434"
 
-        device_config = get_device_config()
-        print(f"Using device config: {device_config}")
+        print(f"Using Ollama model: {self.model_name}")
 
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_path,
-            trust_remote_code=True
-        )
-
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            trust_remote_code=True,
-            **device_config
-        )
-
-        self.model.eval()
-        print("Model loaded successfully!")
+        # Verify Ollama is running
+        try:
+            response = requests.get(f"{self.base_url}/api/tags")
+            if response.status_code == 200:
+                print("Ollama connection successful!")
+            else:
+                raise ConnectionError("Ollama not responding")
+        except Exception as e:
+            raise ConnectionError(f"Cannot connect to Ollama. Make sure it's running: {e}")
 
     def generate(
         self,
@@ -60,7 +43,7 @@ class QwenLLM:
         do_sample: bool = True
     ) -> str:
         """
-        Generate a response from the model.
+        Generate a response from the model via Ollama.
 
         Args:
             prompt: The input prompt/question.
@@ -72,32 +55,26 @@ class QwenLLM:
         Returns:
             The generated response text.
         """
-        messages = [{"role": "user", "content": prompt}]
+        payload = {
+            "model": self.model_name,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "num_predict": max_new_tokens,
+                "temperature": temperature if do_sample else 0,
+                "top_p": top_p
+            }
+        }
 
-        text = self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True
+        response = requests.post(
+            f"{self.base_url}/api/generate",
+            json=payload
         )
 
-        inputs = self.tokenizer([text], return_tensors="pt").to(self.model.device)
-
-        with torch.no_grad():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                do_sample=do_sample,
-                temperature=temperature,
-                top_p=top_p,
-                pad_token_id=self.tokenizer.eos_token_id
-            )
-
-        response = self.tokenizer.decode(
-            outputs[0][len(inputs.input_ids[0]):],
-            skip_special_tokens=True
-        )
-
-        return response.strip()
+        if response.status_code == 200:
+            return response.json().get("response", "").strip()
+        else:
+            raise Exception(f"Ollama error: {response.text}")
 
     def generate_with_system(
         self,
@@ -108,7 +85,7 @@ class QwenLLM:
         top_p: float = 0.9
     ) -> str:
         """
-        Generate a response with a system prompt.
+        Generate a response with a system prompt via Ollama.
 
         Args:
             system_prompt: The system instruction.
@@ -120,32 +97,26 @@ class QwenLLM:
         Returns:
             The generated response text.
         """
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ]
+        payload = {
+            "model": self.model_name,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "stream": False,
+            "options": {
+                "num_predict": max_new_tokens,
+                "temperature": temperature,
+                "top_p": top_p
+            }
+        }
 
-        text = self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True
+        response = requests.post(
+            f"{self.base_url}/api/chat",
+            json=payload
         )
 
-        inputs = self.tokenizer([text], return_tensors="pt").to(self.model.device)
-
-        with torch.no_grad():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                do_sample=True,
-                temperature=temperature,
-                top_p=top_p,
-                pad_token_id=self.tokenizer.eos_token_id
-            )
-
-        response = self.tokenizer.decode(
-            outputs[0][len(inputs.input_ids[0]):],
-            skip_special_tokens=True
-        )
-
-        return response.strip()
+        if response.status_code == 200:
+            return response.json().get("message", {}).get("content", "").strip()
+        else:
+            raise Exception(f"Ollama error: {response.text}")
