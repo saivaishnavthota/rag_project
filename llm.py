@@ -1,15 +1,27 @@
 """
 Local LLM setup using Qwen 2.5 7B.
-Runs entirely on GPU - no external API calls.
+Runs locally with automatic device detection.
 """
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
+def get_device_config():
+    """Detect the best available device and return appropriate config."""
+    if torch.cuda.is_available():
+        try:
+            torch.tensor([1.0]).cuda()
+            return {"device_map": "auto", "torch_dtype": torch.float16}
+        except Exception:
+            pass
+    # CPU fallback
+    return {"device_map": "cpu", "torch_dtype": torch.float32}
+
+
 class QwenLLM:
     """
-    Wrapper class for Qwen 2.5 7B model running locally on GPU.
+    Wrapper class for Qwen 2.5 7B model running locally.
     """
 
     def __init__(self, model_path: str = "Qwen/Qwen2.5-7B-Instruct"):
@@ -22,6 +34,9 @@ class QwenLLM:
         """
         print(f"Loading Qwen model from {model_path}...")
 
+        device_config = get_device_config()
+        print(f"Using device config: {device_config}")
+
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_path,
             trust_remote_code=True
@@ -29,9 +44,8 @@ class QwenLLM:
 
         self.model = AutoModelForCausalLM.from_pretrained(
             model_path,
-            torch_dtype=torch.float16,
-            device_map="auto",
-            trust_remote_code=True
+            trust_remote_code=True,
+            **device_config
         )
 
         self.model.eval()
