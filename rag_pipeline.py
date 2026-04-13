@@ -15,13 +15,13 @@ from llm import QwenLLM
 def clean_response(text: str) -> str:
     """
     Clean up response while preserving bold formatting (**text**).
-    Removes unwanted markdown but keeps bold for key terms.
+    Ensures proper line breaks between bullet points.
 
     Args:
         text: The raw response text from LLM.
 
     Returns:
-        Cleaned text with bold formatting preserved.
+        Cleaned text with bold formatting and proper line breaks.
     """
     if not text:
         return text
@@ -41,11 +41,38 @@ def clean_response(text: str) -> str:
     # Remove image formatting: ![alt](url) → alt
     text = re.sub(r'!\[([^\]]*)\]\([^)]+\)', r'\1', text)
 
-    # Clean up extra whitespace but preserve paragraph breaks
-    text = re.sub(r'[ \t]+', ' ', text)  # Multiple spaces to single
-    text = re.sub(r'\n{3,}', '\n\n', text)  # Max 2 newlines
+    # FIX: Force line breaks before bullet points
+    # This handles the case where model outputs everything on one line
+    # Pattern: " - " in the middle of text (not at start) should become "\n- "
+    text = re.sub(r'\s+-\s+\*\*', '\n- **', text)  # " - **text**" → "\n- **text**"
+    text = re.sub(r'\s+-\s+([A-Z])', r'\n- \1', text)  # " - The" → "\n- The"
 
-    return text.strip()
+    # Handle cases like "standards. - **SGN" → "standards.\n- **SGN"
+    text = re.sub(r'([.!?])\s*-\s+', r'\1\n- ', text)
+
+    # Ensure proper newlines before all remaining bullet points
+    text = re.sub(r'(?<!\n)-\s+', '\n- ', text)
+
+    # Clean up multiple spaces
+    text = re.sub(r'[ \t]+', ' ', text)
+
+    # Clean up multiple newlines (max 2)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+
+    # Fix any double newlines before bullets
+    text = re.sub(r'\n\n+- ', '\n- ', text)
+
+    # Ensure first character isn't a newline
+    text = text.strip()
+
+    # If text starts with "- ", it's already a bullet point
+    if not text.startswith('-'):
+        # Check if there are bullet points and add newline after first sentence
+        if '\n- ' in text:
+            # Find first period followed by bullet and ensure newline
+            text = re.sub(r'^([^.]+\.)\s*\n?-', r'\1\n\n-', text)
+
+    return text
 
 
 class RAGPipeline:
