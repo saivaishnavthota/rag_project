@@ -3,12 +3,62 @@ RAG Pipeline combining vector store retrieval with Qwen LLM generation.
 Includes conversation memory and knowledge learning from interactions.
 """
 
+import re
 from datetime import datetime
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from vector_store import get_vector_store, create_vector_store
 from llm import QwenLLM
+
+
+def clean_markdown_response(text: str) -> str:
+    """
+    Remove all markdown formatting from response.
+    Ensures clean plain text output for mobile app UI.
+
+    Args:
+        text: The raw response text from LLM.
+
+    Returns:
+        Clean plain text without any markdown formatting.
+    """
+    if not text:
+        return text
+
+    # Remove bold markers: **text** → text
+    text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
+
+    # Remove italic markers: *text* → text
+    text = re.sub(r'\*([^*]+)\*', r'\1', text)
+
+    # Remove any remaining standalone asterisks
+    text = re.sub(r'\*+', '', text)
+
+    # Remove markdown headers: ### Header → Header
+    text = re.sub(r'^#{1,6}\s*', '', text, flags=re.MULTILINE)
+
+    # Remove inline code: `code` → code
+    text = re.sub(r'`([^`]+)`', r'\1', text)
+
+    # Remove code blocks: ```code``` → code
+    text = re.sub(r'```[\s\S]*?```', lambda m: m.group(0).replace('```', ''), text)
+
+    # Remove underscores used for emphasis: __text__ or _text_ → text
+    text = re.sub(r'__([^_]+)__', r'\1', text)
+    text = re.sub(r'_([^_]+)_', r'\1', text)
+
+    # Remove link formatting: [text](url) → text
+    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+
+    # Remove image formatting: ![alt](url) → alt
+    text = re.sub(r'!\[([^\]]*)\]\([^)]+\)', r'\1', text)
+
+    # Clean up extra whitespace but preserve paragraph breaks
+    text = re.sub(r'[ \t]+', ' ', text)  # Multiple spaces to single
+    text = re.sub(r'\n{3,}', '\n\n', text)  # Max 2 newlines
+
+    return text.strip()
 
 
 class RAGPipeline:
@@ -156,45 +206,49 @@ class RAGPipeline:
                 last_answer_context = self.conversation_history[-1]["answer"]
 
         # Build the prompt with enhanced context awareness
-        prompt = f"""You are a knowledgeable and thorough assistant that maintains context across conversations.
+        prompt = f"""You are a helpful assistant. Your response will be displayed in a mobile app.
 
-CRITICAL FORMATTING RULES (YOU MUST FOLLOW THESE):
-1. NEVER use asterisks (*) or double asterisks (**) anywhere in your response
-2. NEVER use markdown formatting like **bold** or *italic*
-3. Use plain text only for all content
-4. Put each point on a NEW LINE - do not write everything in one paragraph
-5. Use line breaks to separate sections
-6. Use dashes (-) at the start of lines for bullet points
+OUTPUT FORMAT RULES - STRICTLY FOLLOW:
 
-Context Understanding:
-- When the user asks about "the above", "this", "that", "it", refer to previous conversation
-- When asked to "explain in another way", provide a different perspective on the previous topic
-- Always maintain continuity with the conversation history
+DO NOT USE:
+- Asterisks (*) - FORBIDDEN
+- Double asterisks (**) - FORBIDDEN
+- Markdown formatting - FORBIDDEN
+- Hash symbols (#) for headers - FORBIDDEN
+- Backticks (`) - FORBIDDEN
+- Underscores for emphasis (_) - FORBIDDEN
 
-RESPONSE FORMAT (copy this structure exactly):
+USE ONLY:
+- Plain text
+- Dashes (-) for bullet points
+- Line breaks between sections
+- Numbers (1. 2. 3.) for ordered lists
 
-[Topic Name]
+RESPONSE STRUCTURE:
 
-[One sentence overview]
+Topic Name
+
+Brief overview in one or two sentences.
 
 Key Points:
 
-- Point 1: [explanation]
+- First point with explanation
 
-- Point 2: [explanation]
+- Second point with explanation
 
-- Point 3: [explanation]
+- Third point with explanation
 
-Additional Details:
+Details:
 
-[Further explanation organized in short paragraphs with line breaks between them]
+Additional information in plain paragraphs.
+Use line breaks between paragraphs for readability.
 
-Content Guidelines:
-- Provide detailed explanations with examples
-- Break down complex topics into clear parts
-- If answer not found, say "I could not find the answer in the provided documents."
+CONTEXT RULES:
+- If user says "above", "this", "that", "it" - refer to previous conversation
+- If user says "explain more" - elaborate on previous topic
+- If answer not found - say "I could not find the answer in the provided documents."
 
-Context from Knowledge Base:
+Knowledge Base Context:
 {context}
 """
 
@@ -215,14 +269,17 @@ Note: The user's question appears to be a follow-up. The most recent topic discu
 
         prompt += f"""Current Question: {question}
 
-Detailed Answer (REMEMBER: NO asterisks, use line breaks between points, plain text only):"""
+Answer (plain text, no asterisks, use line breaks):"""
 
         # Generate response (lower temperature for consistent formatting)
         response = self.llm.generate(
             prompt=prompt,
             max_new_tokens=max_new_tokens,
-            temperature=0.5
+            temperature=0.3  # Lower temperature for more consistent formatting
         )
+
+        # Post-process to remove any remaining markdown formatting
+        response = clean_markdown_response(response)
 
         # Store in conversation history
         self.conversation_history.append({
