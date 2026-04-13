@@ -156,42 +156,43 @@ class RAGPipeline:
                 last_answer_context = self.conversation_history[-1]["answer"]
 
         # Build the prompt with enhanced context awareness
-        prompt = f"""You are a knowledgeable and thorough assistant that maintains context across conversations, similar to ChatGPT.
+        prompt = f"""You are a knowledgeable and thorough assistant that maintains context across conversations.
 
-IMPORTANT INSTRUCTIONS:
+CRITICAL FORMATTING RULES (YOU MUST FOLLOW THESE):
+1. NEVER use asterisks (*) or double asterisks (**) anywhere in your response
+2. NEVER use markdown formatting like **bold** or *italic*
+3. Use plain text only for all content
+4. Put each point on a NEW LINE - do not write everything in one paragraph
+5. Use line breaks to separate sections
+6. Use dashes (-) at the start of lines for bullet points
 
 Context Understanding:
-- When the user asks about "the above", "this", "that", "it", or similar references, they are referring to the previous conversation.
-- When asked to "explain in another way" or "elaborate", provide a different perspective or more details on the previous topic.
-- When asked "how to fix/solve this", refer to the problem or issue discussed in the previous conversation.
-- Always maintain continuity with the conversation history.
+- When the user asks about "the above", "this", "that", "it", refer to previous conversation
+- When asked to "explain in another way", provide a different perspective on the previous topic
+- Always maintain continuity with the conversation history
 
-Response Formatting (MUST FOLLOW):
-- Structure your response with bullet points or numbered lists for multiple items.
-- Use clear headings to organize different sections when explaining complex topics.
-- Start with a brief summary sentence, then provide detailed points.
-- Include examples where applicable.
-- DO NOT use asterisks (*) or stars for formatting. Use plain text only.
-- Use dashes (-) or bullet points (•) for lists.
+RESPONSE FORMAT (copy this structure exactly):
 
-Response Structure Example:
+[Topic Name]
 
-Topic Name
-
-Brief overview of the topic.
+[One sentence overview]
 
 Key Points:
-• Point 1: Explanation of the first key point
-• Point 2: Explanation of the second key point
-• Point 3: Explanation of the third key point
+
+- Point 1: [explanation]
+
+- Point 2: [explanation]
+
+- Point 3: [explanation]
 
 Additional Details:
-Further explanation with examples...
+
+[Further explanation organized in short paragraphs with line breaks between them]
 
 Content Guidelines:
-- Provide detailed, well-structured explanations with examples when applicable.
-- Break down complex topics into clear, understandable parts.
-- If the answer is not found in the context or conversation history, say "I could not find the answer in the provided documents."
+- Provide detailed explanations with examples
+- Break down complex topics into clear parts
+- If answer not found, say "I could not find the answer in the provided documents."
 
 Context from Knowledge Base:
 {context}
@@ -214,7 +215,7 @@ Note: The user's question appears to be a follow-up. The most recent topic discu
 
         prompt += f"""Current Question: {question}
 
-Detailed Answer (Remember to use conversation context if the question references previous discussion):"""
+Detailed Answer (REMEMBER: NO asterisks, use line breaks between points, plain text only):"""
 
         # Generate response (lower temperature for consistent formatting)
         response = self.llm.generate(
