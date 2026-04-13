@@ -3,6 +3,7 @@ Local LLM setup using Ollama.
 Uses the locally installed model via Ollama API.
 """
 
+import os
 import requests
 import json
 
@@ -12,15 +13,16 @@ class QwenLLM:
     Wrapper class for LLM running via Ollama.
     """
 
-    def __init__(self, model_path: str = "qwen2.5:7b"):
+    def __init__(self, model_path: str = "qwen2.5:7b", ollama_port: int = 11434):
         """
         Initialize the Ollama client.
 
         Args:
             model_path: Ollama model name (e.g., qwen2.5:7b, qwen2.5:7b-instruct).
+            ollama_port: Port where Ollama is running (default: 11434).
         """
         self.model_name = model_path
-        self.base_url = "http://localhost:11434"
+        self.base_url = os.getenv("OLLAMA_HOST", f"http://localhost:{ollama_port}")
 
         print(f"Using Ollama model: {self.model_name}")
 

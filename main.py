@@ -61,14 +61,22 @@ rag: Optional[RAGPipeline] = None
 # Request/Response Models
 class QueryRequest(BaseModel):
     question: str
-    num_docs: int = 4
-    max_new_tokens: int = 512
+    num_docs: int = 6
+    max_new_tokens: int = 2048  # Increased for formatted responses
+    use_history: bool = True  # Whether to use conversation history
 
 
 class QueryResponse(BaseModel):
     answer: str
     sources: list
     num_docs_retrieved: int
+    history_used: int = 0  # Number of previous exchanges used
+    detected_followup: bool = False  # Whether this was detected as a follow-up question
+
+
+class HistoryResponse(BaseModel):
+    history: list
+    count: int
 
 
 class DocumentRequest(BaseModel):
@@ -137,8 +145,11 @@ async def query(request: QueryRequest, api_key: str = Depends(verify_api_key)):
     Query the RAG system with a question.
 
     - **question**: The question to ask
-    - **num_docs**: Number of documents to retrieve (default: 4)
-    - **max_new_tokens**: Maximum tokens in response (default: 512)
+    - **num_docs**: Number of documents to retrieve (default: 6)
+    - **max_new_tokens**: Maximum tokens in response (default: 1024)
+    - **use_history**: Whether to use conversation history (default: True)
+
+    The system remembers previous conversations and learns from interactions.
     """
     if rag is None:
         raise HTTPException(status_code=503, detail="RAG pipeline not initialized")
@@ -147,7 +158,8 @@ async def query(request: QueryRequest, api_key: str = Depends(verify_api_key)):
         result = rag.query(
             question=request.question,
             num_docs=request.num_docs,
-            max_new_tokens=request.max_new_tokens
+            max_new_tokens=request.max_new_tokens,
+            use_history=request.use_history
         )
         return QueryResponse(**result)
     except Exception as e:
@@ -264,6 +276,40 @@ async def get_stats(api_key: str = Depends(verify_api_key)):
     try:
         stats = rag.get_stats()
         return StatsResponse(**stats)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/history", response_model=HistoryResponse)
+async def get_history(api_key: str = Depends(verify_api_key)):
+    """
+    Get the current conversation history.
+
+    Returns the list of previous Q&A exchanges in the current session.
+    """
+    if rag is None:
+        raise HTTPException(status_code=503, detail="RAG pipeline not initialized")
+
+    try:
+        history = rag.get_history()
+        return HistoryResponse(history=history, count=len(history))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/history/clear", response_model=StatusResponse)
+async def clear_history(api_key: str = Depends(verify_api_key)):
+    """
+    Clear the conversation history.
+
+    Use this to start a fresh conversation without previous context.
+    """
+    if rag is None:
+        raise HTTPException(status_code=503, detail="RAG pipeline not initialized")
+
+    try:
+        result = rag.clear_history()
+        return StatusResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

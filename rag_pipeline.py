@@ -1,7 +1,9 @@
 """
 RAG Pipeline combining vector store retrieval with Qwen LLM generation.
+Includes conversation memory and knowledge learning from interactions.
 """
 
+from datetime import datetime
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -15,41 +17,113 @@ class RAGPipeline:
     Retrieves relevant documents and generates answers using Qwen 2.5 7B.
     """
 
-    def __init__(self, model_name: str = "qwen2.5:7b"):
+    def __init__(self, model_name: str = "qwen2.5:7b", enable_learning: bool = True):
         """
         Initialize the RAG pipeline.
 
         Args:
             model_name: Ollama model name (e.g., qwen2.5:7b).
+            enable_learning: Whether to store Q&A pairs for future retrieval.
         """
         print("Initializing RAG Pipeline...")
         self.vectorstore = get_vector_store()
         self.llm = QwenLLM(model_path=model_name)
         self.retriever = self.vectorstore.as_retriever(
             search_type="similarity",
-            search_kwargs={"k": 4}
+            search_kwargs={"k": 6}
         )
+        # Conversation memory - stores Q&A history for current session
+        self.conversation_history = []
+        self.max_history = 10  # Keep last 10 exchanges
+        self.enable_learning = enable_learning
         print("RAG Pipeline initialized!")
+
+    # Keywords that indicate a follow-up/contextual question
+    FOLLOWUP_INDICATORS = [
+        "above", "this", "that", "it", "the section", "the problem",
+        "the issue", "the error", "the topic", "the same", "previous",
+        "you mentioned", "you said", "explain more", "tell me more",
+        "elaborate", "clarify", "what do you mean", "can you explain",
+        "another way", "different way", "simpler", "in detail", "more detail",
+        "how to fix", "how to solve", "how to resolve", "what about",
+        "and also", "furthermore", "additionally", "related to"
+    ]
+
+    def _is_followup_question(self, question: str) -> bool:
+        """
+        Detect if the question is a follow-up that references previous context.
+
+        Args:
+            question: The user's question.
+
+        Returns:
+            True if it's a follow-up question.
+        """
+        question_lower = question.lower()
+
+        # Check for follow-up indicators
+        for indicator in self.FOLLOWUP_INDICATORS:
+            if indicator in question_lower:
+                return True
+
+        # Short questions are often follow-ups (e.g., "explain more", "why?")
+        if len(question.split()) <= 5 and self.conversation_history:
+            return True
+
+        return False
+
+    def _get_enhanced_query(self, question: str) -> str:
+        """
+        Enhance a vague follow-up question with context from conversation history.
+
+        Args:
+            question: The original question.
+
+        Returns:
+            Enhanced question with context.
+        """
+        if not self.conversation_history:
+            return question
+
+        # Get the last exchange for context
+        last_exchange = self.conversation_history[-1]
+        last_question = last_exchange["question"]
+
+        # Create an enhanced query that includes context
+        enhanced_query = f"{last_question} {question}"
+
+        return enhanced_query
 
     def query(
         self,
         question: str,
-        num_docs: int = 4,
-        max_new_tokens: int = 512
+        num_docs: int = 6,
+        max_new_tokens: int = 2048,
+        use_history: bool = True
     ) -> dict:
         """
-        Query the RAG system.
+        Query the RAG system with conversation memory and learning.
+        Handles follow-up questions like "explain the above" or "how to fix this".
 
         Args:
             question: The user's question.
             num_docs: Number of documents to retrieve.
             max_new_tokens: Maximum tokens in the response.
+            use_history: Whether to include conversation history.
 
         Returns:
             Dictionary with 'answer' and 'sources'.
         """
-        # Retrieve relevant documents
-        docs = self.retriever.invoke(question)
+        # Check if this is a follow-up question
+        is_followup = self._is_followup_question(question)
+
+        # For follow-up questions, use enhanced query for better retrieval
+        search_query = question
+        if is_followup and self.conversation_history:
+            search_query = self._get_enhanced_query(question)
+
+        # Retrieve relevant documents using the (potentially enhanced) query
+        docs = self.retriever.invoke(search_query)
 
         # Build context from retrieved documents
         context_parts = []
@@ -64,30 +138,165 @@ class RAGPipeline:
 
         context = "\n\n".join(context_parts)
 
-        # Build the prompt
-        prompt = f"""You are a helpful assistant. Use the following context to answer the user's question.
-If the answer is not found in the context, say "I could not find the answer in the provided documents."
-Be concise and accurate in your response.
+        # Build conversation history string - include more context for follow-ups
+        history_str = ""
+        last_answer_context = ""
 
-Context:
+        if use_history and self.conversation_history:
+            history_parts = []
+            # For follow-up questions, include more history
+            history_limit = self.max_history if is_followup else min(5, self.max_history)
+
+            for exchange in self.conversation_history[-history_limit:]:
+                history_parts.append(f"User: {exchange['question']}\nAssistant: {exchange['answer']}")
+            history_str = "\n\n".join(history_parts)
+
+            # Get the last answer specifically for follow-up context
+            if is_followup:
+                last_answer_context = self.conversation_history[-1]["answer"]
+
+        # Build the prompt with enhanced context awareness
+        prompt = f"""You are a knowledgeable and thorough assistant that maintains context across conversations, similar to ChatGPT.
+
+IMPORTANT INSTRUCTIONS:
+
+Context Understanding:
+- When the user asks about "the above", "this", "that", "it", or similar references, they are referring to the previous conversation.
+- When asked to "explain in another way" or "elaborate", provide a different perspective or more details on the previous topic.
+- When asked "how to fix/solve this", refer to the problem or issue discussed in the previous conversation.
+- Always maintain continuity with the conversation history.
+
+Response Formatting (MUST FOLLOW):
+- Structure your response with bullet points or numbered lists for multiple items.
+- Use clear headings to organize different sections when explaining complex topics.
+- Start with a brief summary sentence, then provide detailed points.
+- Include examples where applicable.
+- DO NOT use asterisks (*) or stars for formatting. Use plain text only.
+- Use dashes (-) or bullet points (•) for lists.
+
+Response Structure Example:
+
+Topic Name
+
+Brief overview of the topic.
+
+Key Points:
+• Point 1: Explanation of the first key point
+• Point 2: Explanation of the second key point
+• Point 3: Explanation of the third key point
+
+Additional Details:
+Further explanation with examples...
+
+Content Guidelines:
+- Provide detailed, well-structured explanations with examples when applicable.
+- Break down complex topics into clear, understandable parts.
+- If the answer is not found in the context or conversation history, say "I could not find the answer in the provided documents."
+
+Context from Knowledge Base:
 {context}
+"""
 
-Question: {question}
+        if history_str:
+            prompt += f"""
+=== CONVERSATION HISTORY (Use this to understand references like "above", "this", "it") ===
+{history_str}
+=== END OF CONVERSATION HISTORY ===
 
-Answer:"""
+"""
 
-        # Generate response
+        if is_followup and last_answer_context:
+            prompt += f"""
+Note: The user's question appears to be a follow-up. The most recent topic discussed was:
+"{last_answer_context[:500]}..."
+
+"""
+
+        prompt += f"""Current Question: {question}
+
+Detailed Answer (Remember to use conversation context if the question references previous discussion):"""
+
+        # Generate response (lower temperature for consistent formatting)
         response = self.llm.generate(
             prompt=prompt,
             max_new_tokens=max_new_tokens,
-            temperature=0.7
+            temperature=0.5
         )
+
+        # Store in conversation history
+        self.conversation_history.append({
+            "question": question,
+            "answer": response,
+            "timestamp": datetime.now().isoformat(),
+            "is_followup": is_followup
+        })
+
+        # Learn from interaction - store Q&A in vector store for future retrieval
+        # For follow-ups, store with the context of what was being discussed
+        if self.enable_learning and response and "could not find" not in response.lower():
+            if is_followup and self.conversation_history and len(self.conversation_history) > 1:
+                # Store with context from previous question
+                prev_question = self.conversation_history[-2]["question"]
+                contextualized_question = f"{prev_question} - {question}"
+                self._store_learned_knowledge(contextualized_question, response)
+            else:
+                self._store_learned_knowledge(question, response)
 
         return {
             "answer": response,
             "sources": sources,
-            "num_docs_retrieved": len(docs)
+            "num_docs_retrieved": len(docs),
+            "history_used": len(self.conversation_history) - 1,
+            "detected_followup": is_followup
         }
+
+    def _store_learned_knowledge(self, question: str, answer: str) -> None:
+        """
+        Store Q&A pair in vector store for future retrieval.
+
+        Args:
+            question: The user's question.
+            answer: The generated answer.
+        """
+        # Create a document combining Q&A for future retrieval
+        learned_content = f"""Topic: {question}
+
+Explanation: {answer}"""
+
+        doc = Document(
+            page_content=learned_content,
+            metadata={
+                "source": "learned_interaction",
+                "question": question,
+                "timestamp": datetime.now().isoformat(),
+                "type": "qa_pair"
+            }
+        )
+
+        # Add directly to vector store (no splitting needed for Q&A pairs)
+        self.vectorstore.add_documents([doc])
+
+    def clear_history(self) -> dict:
+        """
+        Clear the conversation history.
+
+        Returns:
+            Status dictionary.
+        """
+        self.conversation_history = []
+        return {
+            "status": "success",
+            "message": "Conversation history cleared"
+        }
+
+    def get_history(self) -> list:
+        """
+        Get the current conversation history.
+
+        Returns:
+            List of conversation exchanges.
+        """
+        return self.conversation_history
 
     def add_document(self, content: str, metadata: dict = None) -> dict:
         """
@@ -161,7 +370,7 @@ Answer:"""
         self.vectorstore = create_vector_store()
         self.retriever = self.vectorstore.as_retriever(
             search_type="similarity",
-            search_kwargs={"k": 4}
+            search_kwargs={"k": 6}
         )
 
         return {
