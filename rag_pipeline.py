@@ -12,28 +12,19 @@ from vector_store import get_vector_store, create_vector_store
 from llm import QwenLLM
 
 
-def clean_markdown_response(text: str) -> str:
+def clean_response(text: str) -> str:
     """
-    Remove all markdown formatting from response.
-    Ensures clean plain text output for mobile app UI.
+    Clean up response while preserving bold formatting (**text**).
+    Removes unwanted markdown but keeps bold for key terms.
 
     Args:
         text: The raw response text from LLM.
 
     Returns:
-        Clean plain text without any markdown formatting.
+        Cleaned text with bold formatting preserved.
     """
     if not text:
         return text
-
-    # Remove bold markers: **text** → text
-    text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
-
-    # Remove italic markers: *text* → text
-    text = re.sub(r'\*([^*]+)\*', r'\1', text)
-
-    # Remove any remaining standalone asterisks
-    text = re.sub(r'\*+', '', text)
 
     # Remove markdown headers: ### Header → Header
     text = re.sub(r'^#{1,6}\s*', '', text, flags=re.MULTILINE)
@@ -43,10 +34,6 @@ def clean_markdown_response(text: str) -> str:
 
     # Remove code blocks: ```code``` → code
     text = re.sub(r'```[\s\S]*?```', lambda m: m.group(0).replace('```', ''), text)
-
-    # Remove underscores used for emphasis: __text__ or _text_ → text
-    text = re.sub(r'__([^_]+)__', r'\1', text)
-    text = re.sub(r'_([^_]+)_', r'\1', text)
 
     # Remove link formatting: [text](url) → text
     text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
@@ -206,42 +193,34 @@ class RAGPipeline:
                 last_answer_context = self.conversation_history[-1]["answer"]
 
         # Build the prompt with enhanced context awareness
-        prompt = f"""You are a helpful assistant. Your response will be displayed in a mobile app.
+        prompt = f"""You are a helpful assistant. Format ALL responses using bullet points with bold key terms.
 
-OUTPUT FORMAT RULES - STRICTLY FOLLOW:
+FORMATTING RULES - MUST FOLLOW:
 
-DO NOT USE:
-- Asterisks (*) - FORBIDDEN
-- Double asterisks (**) - FORBIDDEN
-- Markdown formatting - FORBIDDEN
-- Hash symbols (#) for headers - FORBIDDEN
-- Backticks (`) - FORBIDDEN
-- Underscores for emphasis (_) - FORBIDDEN
+1. Use bullet points (-) for ALL information - no paragraphs
+2. Use **bold** for key terms, technical words, names, and important concepts
+3. Break long sentences into multiple bullet points
+4. Use nested bullet points for sub-items (indent with spaces)
+5. Keep each bullet point concise and scannable
 
-USE ONLY:
-- Plain text
-- Dashes (-) for bullet points
-- Line breaks between sections
-- Numbers (1. 2. 3.) for ordered lists
+EXAMPLE FORMAT:
 
-RESPONSE STRUCTURE:
+- The **Self-Lay Operator (SLO)** plays a crucial role in gas network projects
+- Main responsibilities include:
+  - **Load Enquiry**: Supplying all required details to SGN
+  - **Feasibility Studies**: Evaluating technical and economic viability
+  - **Design**: Developing conceptual and detailed designs
+- The SLO must comply with **SGN standards** and **industry regulations**
+- Key phases of the audit process:
+  - **Phase 1**: Initial assessment
+  - **Phase 2**: Detailed review
+  - **Phase 3**: Final approval
 
-Topic Name
-
-Brief overview in one or two sentences.
-
-Key Points:
-
-- First point with explanation
-
-- Second point with explanation
-
-- Third point with explanation
-
-Details:
-
-Additional information in plain paragraphs.
-Use line breaks between paragraphs for readability.
+WHAT TO MAKE BOLD:
+- Technical terms (e.g., **Conceptual Design**, **Feasibility Study**)
+- Names and abbreviations (e.g., **SGN**, **SLO**, **Phase 3**)
+- Important concepts (e.g., **safety requirements**, **compliance**)
+- Key actions (e.g., **must submit**, **required to**)
 
 CONTEXT RULES:
 - If user says "above", "this", "that", "it" - refer to previous conversation
@@ -269,17 +248,17 @@ Note: The user's question appears to be a follow-up. The most recent topic discu
 
         prompt += f"""Current Question: {question}
 
-Answer (plain text, no asterisks, use line breaks):"""
+Answer (use bullet points with **bold** for key terms):"""
 
-        # Generate response (lower temperature for consistent formatting)
+        # Generate response
         response = self.llm.generate(
             prompt=prompt,
             max_new_tokens=max_new_tokens,
-            temperature=0.3  # Lower temperature for more consistent formatting
+            temperature=0.5
         )
 
-        # Post-process to remove any remaining markdown formatting
-        response = clean_markdown_response(response)
+        # Post-process to clean up while preserving bold formatting
+        response = clean_response(response)
 
         # Store in conversation history
         self.conversation_history.append({
