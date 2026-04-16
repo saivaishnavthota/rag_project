@@ -249,16 +249,27 @@ async def get_data(request: GetDataRequest, api_key: str = Depends(verify_api_ke
 
     system_prompt = request.system_prompt or (
         "You are a structured JSON generator. "
-        "Return strict JSON only. "
-        "Do not return markdown, bullets, or explanations."
+        "Return only a valid JSON object. "
+        "Do not include markdown fences. "
+        "Do not include bullets. "
+        "Do not include explanation text. "
+        "Do not include any text before or after the JSON object. "
+        "Every value must match the schema shape exactly."
     )
+
 
     final_prompt = (
         f"{system_prompt}\n\n"
         f"User request:\n{request.prompt}\n\n"
-        f"Return JSON matching this schema shape exactly:\n"
-        f"{json.dumps(request.schema, indent=2)}"
+        f"Return one valid JSON object matching this schema exactly:\n"
+        f"{json.dumps(request.schema, indent=2)}\n\n"
+        f"Output rules:\n"
+        f"1. Output only JSON\n"
+        f"2. No markdown\n"
+        f"3. No explanation\n"
+        f"4. No extra text\n"
     )
+
 
     try:
         result = rag.query(
