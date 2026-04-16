@@ -115,21 +115,11 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
     if not raw:
         raise ValueError("LLM returned empty response")
 
-    try:
-        parsed = json.loads(raw)
-        if isinstance(parsed, dict):
-            return parsed
-    except json.JSONDecodeError:
-        pass
+    candidates = [raw]
 
     if raw.startswith("```"):
         cleaned = raw.replace("```json", "").replace("```", "").strip()
-        try:
-            parsed = json.loads(cleaned)
-            if isinstance(parsed, dict):
-                return parsed
-        except json.JSONDecodeError:
-            pass
+        candidates.append(cleaned)
 
     start = raw.find("{")
     if start != -1:
@@ -153,12 +143,33 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
             elif ch == "}":
                 depth -= 1
                 if depth == 0:
-                    candidate = raw[start:i + 1]
-                    parsed = json.loads(candidate)
-                    if isinstance(parsed, dict):
-                        return parsed
+                    candidates.append(raw[start:i + 1])
+                    break
 
-    raise ValueError("LLM did not return valid JSON object")
+    last_error = None
+
+    for candidate in candidates:
+        candidate = candidate.strip()
+        if not candidate:
+            continue
+
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception as e:
+            last_error = e
+
+        try:
+            import ast
+            parsed = ast.literal_eval(candidate)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception as e:
+            last_error = e
+
+    raise ValueError(f"{last_error}. Raw output: {raw[:1000]}")
+
 
 
 # Lifespan context manager for startup/shutdown
