@@ -115,37 +115,39 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
     if not raw:
         raise ValueError("LLM returned empty response")
 
-    candidates = [raw]
+    def normalize_candidate(value: str) -> str:
+        cleaned = value.strip()
 
-    if raw.startswith("```"):
-        cleaned = raw.replace("```json", "").replace("```", "").strip()
-        candidates.append(cleaned)
+        if cleaned.startswith("```"):
+            cleaned = cleaned.replace("```json", "").replace("```", "").strip()
 
-    start = raw.find("{")
-    if start != -1:
-        depth = 0
-        in_string = False
-        escape = False
-        for i in range(start, len(raw)):
-            ch = raw[i]
-            if in_string:
-                if escape:
-                    escape = False
-                elif ch == "\\":
-                    escape = True
-                elif ch == '"':
-                    in_string = False
+        normalized_lines = []
+        for line in cleaned.splitlines():
+            line = line.strip()
+            if not line:
                 continue
-            if ch == '"':
-                in_string = True
-            elif ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    candidates.append(raw[start:i + 1])
-                    break
 
+            if line.startswith("- "):
+                line = line[2:].strip()
+
+            line = line.replace("**", "")
+
+            normalized_lines.append(line)
+
+        cleaned = "\n".join(normalized_lines)
+
+        cleaned = cleaned.replace("(Blue)", "")
+        cleaned = cleaned.replace("(Pink)", "")
+        cleaned = cleaned.replace("(White)", "")
+        cleaned = cleaned.replace("(Dark Grey)", "")
+        cleaned = cleaned.replace("(Light Grey)", "")
+        cleaned = cleaned.replace("(Yellow)", "")
+
+        cleaned = cleaned.replace("tru}", "true}")
+
+        return cleaned
+
+    candidates = [raw, normalize_candidate(raw)]
     last_error = None
 
     for candidate in candidates:
@@ -168,7 +170,8 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
         except Exception as e:
             last_error = e
 
-    raise ValueError(f"{last_error}. Raw output: {raw[:1000]}")
+    raise ValueError(f"{last_error}. Raw output: {raw[:2000]}")
+
 
 
 
