@@ -4,14 +4,15 @@ Provides REST API endpoints for querying and document management.
 """
 
 import os
+import json
 import secrets
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Optional, Any, Dict
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Depends, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import uvicorn
 
 
@@ -51,6 +52,7 @@ async def verify_api_key(api_key: str = Security(api_key_header)):
 
     return api_key
 
+
 from rag_pipeline import RAGPipeline
 
 
@@ -74,6 +76,19 @@ class QueryResponse(BaseModel):
     detected_followup: bool = False  # Whether this was detected as a follow-up question
 
 
+class GetDataRequest(BaseModel):
+    prompt: str = Field(min_length=1)
+    schema: Dict[str, Any]
+    system_prompt: Optional[str] = None
+    num_docs: int = 6
+    max_new_tokens: int = 2048
+    use_history: bool = True
+
+
+class GetDataResponse(BaseModel):
+    data: Dict[str, Any]
+
+
 class HistoryResponse(BaseModel):
     history: list
     count: int
@@ -93,6 +108,57 @@ class StatsResponse(BaseModel):
     total_chunks: int
     embedding_model: str
     llm_model: str
+
+
+def _extract_json_object(text: str) -> Dict[str, Any]:
+    raw = (text or "").strip()
+    if not raw:
+        raise ValueError("LLM returned empty response")
+
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    if raw.startswith("```"):
+        cleaned = raw.replace("```json", "").replace("```", "").strip()
+        try:
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+    start = raw.find("{")
+    if start != -1:
+        depth = 0
+        in_string = False
+        escape = False
+        for i in range(start, len(raw)):
+            ch = raw[i]
+            if in_string:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = raw[start:i + 1]
+                    parsed = json.loads(candidate)
+                    if isinstance(parsed, dict):
+                        return parsed
+
+    raise ValueError("LLM did not return valid JSON object")
 
 
 # Lifespan context manager for startup/shutdown
@@ -166,6 +232,50 @@ async def query(request: QueryRequest, api_key: str = Depends(verify_api_key)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/get-data", response_model=GetDataResponse)
+async def get_data(request: GetDataRequest, api_key: str = Depends(verify_api_key)):
+    """
+    Get strict structured JSON data from the RAG/LLM system.
+
+    - **prompt**: The user's request
+    - **schema**: Target JSON schema shape to generate
+    - **system_prompt**: Optional system instruction
+    - **num_docs**: Number of documents to retrieve
+    - **max_new_tokens**: Maximum tokens in response
+    - **use_history**: Whether to use conversation history
+    """
+    if rag is None:
+        raise HTTPException(status_code=503, detail="RAG pipeline not initialized")
+
+    system_prompt = request.system_prompt or (
+        "You are a structured JSON generator. "
+        "Return strict JSON only. "
+        "Do not return markdown, bullets, or explanations."
+    )
+
+    final_prompt = (
+        f"{system_prompt}\n\n"
+        f"User request:\n{request.prompt}\n\n"
+        f"Return JSON matching this schema shape exactly:\n"
+        f"{json.dumps(request.schema, indent=2)}"
+    )
+
+    try:
+        result = rag.query(
+            question=final_prompt,
+            num_docs=request.num_docs,
+            max_new_tokens=request.max_new_tokens,
+            use_history=request.use_history
+        )
+        answer = (result or {}).get("answer", "")
+        data = _extract_json_object(answer)
+        return GetDataResponse(data=data)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
@@ -200,7 +310,6 @@ async def upload_document(
             except UnicodeDecodeError:
                 text = content.decode("latin-1")
 
-            import json
             meta = json.loads(metadata)
             meta["filename"] = file.filename
             meta["file_type"] = file_ext
